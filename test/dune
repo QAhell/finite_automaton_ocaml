@@ -1,0 +1,3 @@
+(test
+ (name finite_automaton)
+ (libraries finite_automaton simple_sequence utf8_stream interval_map))
