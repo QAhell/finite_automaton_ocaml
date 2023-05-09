@@ -490,7 +490,7 @@ struct
   (* module Imap = Interval_map (I)*)
   module Imap = Array_interval_map(B.Input)
   let flip f x y = f y x
-  module Iset = Set.Make (I)
+  module Iset : Set.S with type elt = I.t = Set.Make (I)
 
   let minimize_dfa dfa =
     let alphabet = equivalent_intervals dfa in
@@ -820,6 +820,24 @@ module Int_state_automaton_type =
             val add_transition_dfa : I.t * I.t -> int -> int -> int F.Transition.t -> int F.Transition.t
             val add_transition_nfa : I.t * I.t -> int -> int -> Int_set.t F.Transition.t -> Int_set.t F.Transition.t
             val add_transition_enfa : (I.t option * I.t option) -> int -> int -> Int_set.t ET.t -> Int_set.t ET.t
+
+            module Simple_error :
+              functor (Input : sig include Utf8_stream.Code_point_input
+                                val line : t -> int
+                                val column : t -> int
+                                val position : t -> int end) ->
+              sig
+                include Simple_parser_combinator.Error_info with type t = string Utf8_stream.with_position
+                val make_error : string -> Input.t -> t
+              end
+
+            module Serializer :
+              functor (Output : sig include Utf8_stream.Code_point_output val put_str : t -> string -> t end) ->
+                sig
+                  val serialize_nfa : (I.t -> int) -> Output.t -> nfa -> Output.t
+                  (*val serialize_dfa : Output.t -> dfa -> Output.t*)
+                end
+
           end
       end
 
@@ -881,4 +899,63 @@ struct
           F.Transition.fold (fun (l, r) state to_ ->
               add_transition_nfa (l, r) state to_)
             automaton.transition F.Transition.empty }
+
+  module Simple_error (Input : sig include Utf8_stream.Code_point_input
+                                val line : t -> int
+                                val column : t -> int
+                                val position : t -> int end) =
+    struct
+      type t = string Utf8_stream.with_position
+      let default_error = {
+          Utf8_stream.input = "<not an error>" ;
+          Utf8_stream.line = -1 ;
+          Utf8_stream.column = -1 ;
+          Utf8_stream.position = -1 ;
+        }
+      let is_default_error e =
+        e.Utf8_stream.input = "<not an error>" &&
+        e.Utf8_stream.line = -1 &&
+        e.Utf8_stream.column = -1 &&
+        e.Utf8_stream.position = -1
+      let is_real_error e = not (is_default_error e)
+      let merge e1 e2 = (* more specific error wins, i. e. longer parser wins *)
+        if e1.Utf8_stream.position >= e2.Utf8_stream.position then e1 else e2
+      let make_error msg i = {
+          Utf8_stream.input = msg ;
+          Utf8_stream.line = Input.line i ;
+          Utf8_stream.column = Input.column i ;
+          Utf8_stream.position = Input.position i ;
+        }
+    end
+
+  module Serializer (Output : sig include Utf8_stream.Code_point_output val put_str : t -> string -> t end) =
+    struct
+      open Simple_json
+      module P = Json_printer (Output)
+      let (|>) x f = f x
+      let json_number_of_int n =
+        Number (((if n >= 0 then Positive else Negative),
+                string_of_int (abs n), "", None))
+      let json_list_of_nfa_transition l r from to_ =
+        Array ([
+            Array (List.map json_number_of_int [l; r; from]);
+            Array (Int_set.elements to_
+                    |> List.map json_number_of_int);
+        ])
+      let json_of_nfa int_of_input_elt nfa =
+        Object (
+          String_map.empty
+            |> String_map.add "start_state" (
+                json_number_of_int nfa.start_state)
+            |> String_map.add "accepting_states" (Array (
+                nfa.accepting_states
+                  |> Int_set.elements
+                  |> List.map json_number_of_int))
+            |> String_map.add "transition" (Array ([] |> (
+                nfa.transition
+                  |> F.Transition.fold (fun (l, r) from to_ acc ->
+                        json_list_of_nfa_transition (int_of_input_elt l) (int_of_input_elt r) from to_ :: acc)))))
+      let serialize_nfa int_of_input_elt output nfa =
+        P.print_json output (json_of_nfa int_of_input_elt nfa)
+    end
 end

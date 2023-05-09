@@ -362,6 +362,48 @@ module Int_state_automaton_type :
             val add_transition_dfa : I.t * I.t -> int -> int -> int F.Transition.t -> int F.Transition.t
             val add_transition_nfa : I.t * I.t -> int -> int -> Int_set.t F.Transition.t -> Int_set.t F.Transition.t
             val add_transition_enfa : (I.t option * I.t option) -> int -> int -> Int_set.t ET.t -> Int_set.t ET.t
+
+            module Simple_error :
+              functor (Input : sig include Utf8_stream.Code_point_input
+                                val line : t -> int
+                                val column : t -> int
+                                val position : t -> int end) ->
+              sig
+                include Simple_parser_combinator.Error_info with type t = string Utf8_stream.with_position
+                val make_error : string -> Input.t -> t
+              end
+
+            module Serializer :
+              functor (Output : sig include Utf8_stream.Code_point_output val put_str : t -> string -> t end) ->
+                sig
+                  val serialize_nfa : (I.t -> int) -> Output.t -> nfa -> Output.t
+                  (*val serialize_dfa : Output.t -> dfa -> Output.t*)
+                end
+
+            (* module Automaton_parser :
+              functor (Parser : Simple_parser_combinator.Parser_combinator) ->
+              functor (Input : Utf8_stream.Code_point_input) ->
+              functor (_ : sig val make_error : string -> Input.t -> Parser.Error_info.t end) ->
+                sig
+                  val parse_nfa : (int -> I.t option) -> (Input.t, nfa) Parser.t
+                  val parse_dfa : (Input.t, dfa) Parser.t
+                end
+
+            module Deserializer : 
+              functor (Input : sig include Utf8_stream.Code_point_input
+                                val line : t -> int
+                                val column : t -> int
+                                val position : t -> int end) ->
+                sig
+                  module Simple_error = Simple_error(Input)
+                  val deserialize_nfa : Input.t -> (nfa * Input.t * Simple_error.t, Simple_error.t) Either.t
+                  val deserialize_dfa : Input.t -> (dfa * Input.t * Simple_error.t, Simple_error.t) Either.t
+                end
+
+            val write_nfa : nfa -> string
+            val write_dfa : dfa -> string
+            val read_nfa : string -> (nfa, Simple_error.t) Either.t
+            val read_dfa : string -> (dfa, Simple_error.t) Either.t *)
           end
       end
 

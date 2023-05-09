@@ -1,4 +1,4 @@
 (library
  (public_name finite_automaton)
  (name finite_automaton)
- (libraries simple_sequence utf8_stream interval_map))
+ (libraries simple_sequence utf8_stream interval_map simple_parser_combinator simple_json))
