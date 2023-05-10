@@ -835,7 +835,7 @@ module Int_state_automaton_type =
               functor (Output : sig include Utf8_stream.Code_point_output val put_str : t -> string -> t end) ->
                 sig
                   val serialize_nfa : (I.t -> int) -> Output.t -> nfa -> Output.t
-                  (*val serialize_dfa : Output.t -> dfa -> Output.t*)
+                  val serialize_dfa : (I.t -> int) -> Output.t -> dfa -> Output.t
                 end
 
           end
@@ -957,5 +957,26 @@ struct
                         json_list_of_nfa_transition (int_of_input_elt l) (int_of_input_elt r) from to_ :: acc)))))
       let serialize_nfa int_of_input_elt output nfa =
         P.print_json output (json_of_nfa int_of_input_elt nfa)
+
+      let json_list_of_dfa_transition l r from to_ =
+        Array ([
+            Array (List.map json_number_of_int [l; r; from]);
+            json_number_of_int to_;
+        ])
+      let json_of_dfa int_of_input_elt dfa =
+        Object (
+          String_map.empty
+            |> String_map.add "start_state" (
+                json_number_of_int dfa.start_state)
+            |> String_map.add "accepting_states" (Array (
+                dfa.accepting_states
+                  |> Int_set.elements
+                  |> List.map json_number_of_int))
+            |> String_map.add "transition" (Array ([] |> (
+                dfa.transition |>
+                  F.Transition.fold (fun (l, r) from to_ acc ->
+                      json_list_of_dfa_transition (int_of_input_elt l) (int_of_input_elt r) from to_ :: acc)))))
+      let serialize_dfa int_of_input_elt output dfa =
+        P.print_json output (json_of_dfa int_of_input_elt dfa)
     end
 end

@@ -23,8 +23,11 @@ module S = A.Serializer (Code_point_output_with_put_str (Encoded_string_output))
 module P = Recursive_descent_parser (Trampoline) (E)
 module J = Default_json_parser (P) (Decoded_string_input) (E)
 
-let serialize_automaton a =
+let serialize_nfa a =
   Encoded_string_output.to_string (S.serialize_nfa (fun x -> x) (Encoded_string_output.empty ()) a) ;;
+let serialize_dfa a =
+  Encoded_string_output.to_string (S.serialize_dfa (fun x -> x) (Encoded_string_output.empty ()) a) ;;
+
 
 let parse_json text =
   let input = Decoded_string_input.of_string text in
@@ -37,7 +40,6 @@ let parse_json text =
       input in
   json ;;
 
-
 let test_serialize_nfa () =
   let start_state = 0 in
   let accepting_states = A.F.State.add 2 (A.F.State.singleton 1) in
@@ -47,7 +49,7 @@ let test_serialize_nfa () =
   let a = { start_state = start_state ;
             accepting_states = accepting_states ;
             transition = transition } in
-  let text = serialize_automaton a in
+  let text = serialize_nfa a in
   let json = parse_json text in
   match json with
     | Object o ->
@@ -61,11 +63,84 @@ let test_serialize_nfa () =
                   List.mem (Number (Positive, "2", "", None)) accepting_states &&
                   not (List.mem (Number (Positive, "0", "", None)) accepting_states))
                 "The serializer must correctly write accepting states!"
-          | _ -> failwith "The accepting_states must be a json array!")
-        (* TODO: test serialized transition *)
+          | _ -> failwith "The accepting_states must be a json array!") ;
+        (match String_map.find "transition" o with
+          | Array transitions ->
+              assertTrue (2 = List.length transitions) "All two transition entries must be serialized!" ;
+              let elt42 = List.find (function Array [Array [Number (Positive, "42", "", None);
+                                                            Number (Positive, "42", "", None);
+                                                            Number (Positive, "0", "", None)]; _] -> true
+                                      | _ -> false) transitions in
+              let elt43 = List.find (function Array [Array [Number (Positive, "43", "", None);
+                                                            Number (Positive, "43", "", None);
+                                                            Number (Positive, "0", "", None)]; _] -> true
+                                      | _ -> false) transitions in
+              (match elt42 with
+                | Array [_; Array target] ->
+                    assertTrue (2 = List.length target &&
+                                List.mem (Number (Positive, "1", "", None)) target &&
+                                List.mem (Number (Positive, "2", "", None)) target)
+                      "All target states must be serialized for code point 42"
+                | _ -> failwith "transition elements must be arrays") ;
+              (match elt43 with
+                | Array [_; Array target] ->
+                    assertTrue (1 = List.length target &&
+                                List.mem (Number (Positive, "1", "", None)) target)
+                      "All target states must be serialized for code point 43"
+                | _ -> failwith "transition elements must be arrays")
+          | _ -> failwith "Transition must be a list!"
+         )
     | _ -> failwith "Serialization must produce an object!" ;;
 
+let test_serialize_dfa () =
+  let start_state = 0 in
+  let accepting_states = A.F.State.add 2 (A.F.State.singleton 1) in
+  let transition =
+        A.add_transition_dfa (43, 43) 0 1
+        (A.add_transition_dfa (42, 42) 0 2 A.F.Transition.empty) in
+  let a = { start_state = start_state ;
+            accepting_states = accepting_states ;
+            transition = transition } in
+  let text = serialize_dfa a in
+  let json = parse_json text in
+  match json with
+    | Object o ->
+        assertTrue
+          (String_map.find "start_state" o = Number (Positive, "0", "", None))
+          "The serializer must correctly write the start state" ;
+        (match String_map.find "accepting_states" o with
+          | Array accepting_states ->
+              assertTrue (
+                  List.mem (Number (Positive, "1", "", None)) accepting_states &&
+                  List.mem (Number (Positive, "2", "", None)) accepting_states &&
+                  not (List.mem (Number (Positive, "0", "", None)) accepting_states))
+                "The serializer must correctly write accepting states!"
+          | _ -> failwith "The accepting_states must be a json array!") ;
+        (match String_map.find "transition" o with
+          | Array transitions ->
+              assertTrue (2 = List.length transitions) "All two transition entries must be serialized!" ;
+              let elt42 = List.find (function Array [Array [Number (Positive, "42", "", None);
+                                                            Number (Positive, "42", "", None);
+                                                            Number (Positive, "0", "", None)]; _] -> true
+                                      | _ -> false) transitions in
+              let elt43 = List.find (function Array [Array [Number (Positive, "43", "", None);
+                                                            Number (Positive, "43", "", None);
+                                                            Number (Positive, "0", "", None)]; _] -> true
+                                      | _ -> false) transitions in
+              (match elt42 with
+                | Array [_; Number (Positive, "2", "", None)] -> ()
+                | _ -> failwith "All target states must be serialized for code point 42") ;
+              (match elt43 with
+                | Array [_; Number (Positive, "1", "", None)] -> ()
+                | _ -> failwith "All target states must be serialized for code point 43")
+          | _ -> failwith "Transition must be a list!"
+         )
+    | _ -> failwith "Serialization must produce an object!" ;;
+
+
+
 let test () =
-  test_serialize_nfa () ;;
+  test_serialize_nfa () ;
+  test_serialize_dfa () ;;
 
 test () ;;

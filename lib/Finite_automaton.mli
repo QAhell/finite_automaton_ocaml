@@ -377,7 +377,7 @@ module Int_state_automaton_type :
               functor (Output : sig include Utf8_stream.Code_point_output val put_str : t -> string -> t end) ->
                 sig
                   val serialize_nfa : (I.t -> int) -> Output.t -> nfa -> Output.t
-                  (*val serialize_dfa : Output.t -> dfa -> Output.t*)
+                  val serialize_dfa : (I.t -> int) -> Output.t -> dfa -> Output.t
                 end
 
             (* module Automaton_parser :
