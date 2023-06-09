@@ -838,6 +838,18 @@ module Int_state_automaton_type =
                   val serialize_dfa : (I.t -> int) -> Output.t -> dfa -> Output.t
                 end
 
+            module Automaton_parser :
+              functor (Parser : Simple_parser_combinator.Parser_combinator) ->
+              functor (Input : Utf8_stream.Code_point_input) ->
+              functor (_ : sig val make_error : string -> Input.t -> Parser.Error_info.t end) ->
+              functor (_ : sig val input_of_int : int -> I.t option end) ->
+                sig
+                  val parse_nfa : (Input.t, nfa) Parser.t
+                  (*val parse_dfa : (Input.t, dfa) Parser.t*)
+                end
+
+            val write_nfa : nfa -> string
+
           end
       end
 
@@ -979,4 +991,173 @@ struct
       let serialize_dfa int_of_input_elt output dfa =
         P.print_json output (json_of_dfa int_of_input_elt dfa)
     end
+
+  module Automaton_parser =
+    functor (Parser : Simple_parser_combinator.Parser_combinator) ->
+    functor (Input : Utf8_stream.Code_point_input) ->
+    functor (E : sig val make_error : string -> Input.t -> Parser.Error_info.t end) ->
+    functor (I2i : sig val input_of_int : int -> I.t option end) ->
+      struct
+        let _f i = E.make_error "" i ;;
+
+        module Automaton_constructors =
+        struct
+          type digits =
+            | Digits of int
+            | Digits_error of string
+          type text =
+            | Text of string
+            | Text_error of string
+
+          type transition_element = int * int * int * F.State.t
+
+          let start_mask = 1
+          let accepting_mask = 2
+          let transition_mask = 4
+          let has_start state = 0 <> state land start_mask
+          let has_accepting state = 0 <> state land accepting_mask
+          let has_transition state = 0 <> state land transition_mask
+          let set_start state = state lor start_mask
+          let set_accepting state = state lor accepting_mask
+          let set_transition state = state lor transition_mask
+          type value =
+            | Automaton of nfa
+            | Number of int
+            | Numbers of F.State.t
+            | Transition_element of transition_element
+            | Transition of F.State.t F.Transition.t
+            | Error of string
+
+          type arr = value list
+          type obj =
+            | Obj of int * nfa (** parsing state see has_ and set_ functions above *)
+            | Obj_error of string
+
+          let empty_digits = Digits 0
+          let put_digit ds d =
+            match ds with
+              | Digits ds ->
+                  if '0' <= d && d <= '9' then
+                    let digit = Char.code d - Char.code '0' in
+                    let new_ds = ds * 10 + digit in
+                    (if (new_ds - digit) / 10 = ds then
+                      Digits new_ds
+                    else
+                      Digits_error (Printf.sprintf "The number %d%c cannot be represented by the internal integer data type because the value is too big!" ds d))
+                  else
+                    Digits_error (Printf.sprintf "The digit %c is not a valid digit!" d)
+              | Digits_error error -> Digits_error error
+
+          let empty_text = Text ""
+          let put_code_point text code_point =
+            match text with
+              | Text text ->
+                  if Char.code 'a' <= code_point && code_point <= Char.code 'z' ||
+                     Char.code 'A' <= code_point && code_point <= Char.code 'Z' ||
+                     Char.code '_' = code_point then
+                    Text (text ^ String.make 1 (Char.chr code_point))
+                  else
+                    Text_error (Printf.sprintf
+                      "The following code point was found in a JSON string value but can't be part of a serialized automaton: %d" code_point)
+            | Text_error error -> Text_error error
+
+          let empty_array = []
+          let put_array arr value = value :: arr (* This is a reversed representation! It doesn't matter because it will be converted to a set anyway. *)
+
+          let empty_object =
+            Obj (0, {start_state = 0;
+                     accepting_states = F.State.empty;
+                     transition = F.Transition.empty})
+          let put_key_value obj key value =
+            match obj with
+              | Obj (state, nfa) ->
+                (match key, value with
+                  | _, Error error -> Obj_error error
+                  | Text "start_state", Number ds when not (has_start state) ->
+                      Obj (set_start state, { nfa with start_state = ds })
+                  | Text "start_state", _ when not (has_start state) ->
+                      Obj_error "The value of start_state must be a number!"
+                  | Text "start_state", _ ->
+                      Obj_error "An object has multiple start_states which is not allowed!"
+                  | Text "accepting_states", Numbers ns when not (has_accepting state) ->
+                      Obj (set_accepting state, { nfa with accepting_states = ns })
+                  | Text "accepting_states", _ when not (has_accepting state) ->
+                      Obj_error "The value of accepting_states must be a list of numbers!"
+                  | Text "accepting_states", _ ->
+                      Obj_error "An object has multiple accepting_states which is not allowed!"
+                  | Text "transition", Transition t when not (has_transition state) ->
+                      Obj (set_transition state, { nfa with transition = t })
+                  | Text "transition", _ when not (has_transition state) ->
+                      Obj_error "The value of transition must be a list of transition entries. Each entry must be of the form [[l, r, s], states] where l is an input symbol less than input symbol r, s is a state and states is a list of states."
+                  | Text "transition", _ ->
+                      Obj_error "An object has multiple transition fields which is not allowed!"
+                  | Text key, _ ->
+                      Obj_error ("Encountered unknown key: " ^ key)
+                  | Text_error e, _ -> Obj_error e)
+              | Obj_error e -> Obj_error e
+
+          let of_null = Error "An automaton representation can't contain null!"
+          let of_bool _ = Error "An automaton representation can neither contain true nor false!"
+          let of_number sign int_part fraction exponent =
+            match sign, int_part, fraction, exponent with
+              | Simple_json.Positive, Digits n, Digits 0, None -> Number n
+              | Simple_json.Positive, Digits _, Digits _, None -> Error "Numbers mustn't have fractions!"
+              | Negative, _, _, _ -> Error "Numbers mustn't be negative!"
+              | _, Digits_error e, _, _ -> Error e
+              | _, _, Digits_error e, _ -> Error e
+              | _, _, _, Some _ -> Error "Automaton representations can't have numbers with exponents!"
+          let of_text _ = Error "An automaton representation can't contain text values!"
+          let of_array arr =
+            let is_number = function
+              | Number _ -> true
+              | _ -> false in
+            let is_transition_element = function
+              | Transition_element _ -> true
+              | _ -> false in
+            if List.for_all is_number arr then
+              Numbers (List.fold_right (function Number n -> F.State.add n | _ -> failwith "Implementation bug: All elements of array should be numbers!") arr F.State.empty)
+            else if List.for_all is_transition_element arr then
+              List.fold_right (fun elt acc ->
+                  match acc with
+                    | Transition acc ->
+                      (match elt with
+                        | Transition_element (l, r, from, _to) ->
+                           (match I2i.input_of_int l, I2i.input_of_int r with
+                              | None, _ -> Error (Printf.sprintf "Number %d could not be converted to input!" l)
+                              | _, None -> Error (Printf.sprintf "Number %d could not be converted to input!" r)
+                              | Some l, Some r ->
+                          Transition (F.State.fold
+                                        (add_transition_nfa (l, r) from) _to acc))
+                        | _ -> failwith "Implementation bug: All elements of array should be transition elements!")
+                    | e -> e)
+                arr (Transition F.Transition.empty)
+            else
+              (match arr with
+                | [Number l; Number r; Number from; Numbers _to] ->
+                    Transition_element (l, r, from, _to)
+                | _ -> Error "An array must either consist of numbers only or of transition elements only or be a transition element of the form [ number, number, number, array of numbers].")
+
+          let of_object = function
+            | Obj_error e -> Error e
+            | Obj (state, _) when not (has_start state) ->
+                Error "Automaton representation must include a field \"start\"."
+            | Obj (state, _) when not (has_accepting state) ->
+                Error "Automaton representation must include a field \"accepting_states\"."
+            | Obj (state, _) when not (has_transition state) ->
+                Error "Automaton representation must include a field \"transition\"."
+            | Obj (_, obj) -> Automaton obj
+
+        end
+
+        module Automaton_json_parser = Simple_json.Json_parser (Automaton_constructors) (Parser) (Input) (E)
+
+        let parse_nfa : (Input.t, nfa) Parser.t =
+          Parser.bind Automaton_json_parser.parse_json (function
+              | Automaton_constructors.Error e -> Parser.expect "error" (fun input -> Either.Right (E.make_error e input))
+              | Automaton_constructors.Automaton a -> Parser.expect "result" (fun input -> Either.Left (a, input))
+              | _ -> Parser.expect "error" (fun input -> Either.Right (E.make_error "Incomplete automaton representation! Toplevel JSON value must be an object!" input)))
+
+      end
+
+      let write_nfa _ = ""
 end

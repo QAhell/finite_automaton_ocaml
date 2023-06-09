@@ -380,16 +380,17 @@ module Int_state_automaton_type :
                   val serialize_dfa : (I.t -> int) -> Output.t -> dfa -> Output.t
                 end
 
-            (* module Automaton_parser :
+            module Automaton_parser :
               functor (Parser : Simple_parser_combinator.Parser_combinator) ->
               functor (Input : Utf8_stream.Code_point_input) ->
               functor (_ : sig val make_error : string -> Input.t -> Parser.Error_info.t end) ->
+              functor (_ : sig val input_of_int : int -> I.t option end) ->
                 sig
-                  val parse_nfa : (int -> I.t option) -> (Input.t, nfa) Parser.t
-                  val parse_dfa : (Input.t, dfa) Parser.t
+                  val parse_nfa : (Input.t, nfa) Parser.t
+                  (*val parse_dfa : (Input.t, dfa) Parser.t*)
                 end
 
-            module Deserializer : 
+            (* module Deserializer : 
               functor (Input : sig include Utf8_stream.Code_point_input
                                 val line : t -> int
                                 val column : t -> int
@@ -398,10 +399,10 @@ module Int_state_automaton_type :
                   module Simple_error = Simple_error(Input)
                   val deserialize_nfa : Input.t -> (nfa * Input.t * Simple_error.t, Simple_error.t) Either.t
                   val deserialize_dfa : Input.t -> (dfa * Input.t * Simple_error.t, Simple_error.t) Either.t
-                end
+                end*)
 
             val write_nfa : nfa -> string
-            val write_dfa : dfa -> string
+            (*val write_dfa : dfa -> string
             val read_nfa : string -> (nfa, Simple_error.t) Either.t
             val read_dfa : string -> (dfa, Simple_error.t) Either.t *)
           end
